@@ -67,7 +67,7 @@ class ServerlessFullstackPlugin {
         return this.validateConfig()
             .then(() => {
                 bucketName = this.getBucketName(this.options.bucketName);
-                return (this.cliOptions.confirm === false || this.options.noConfirm === true) ? true : new Confirm(`Are you sure you want to delete bucket '${bucketName}'?`).run();
+                return (this.getCLIOptions('confirm') === false || this.options.noConfirm === true) ? true : new Confirm(`Are you sure you want to delete bucket '${bucketName}'?`).run();
             })
             .then(goOn => {
                 if (goOn) {
@@ -111,7 +111,7 @@ class ServerlessFullstackPlugin {
     generateClient() {
         const clientCommand = this.options.clientCommand;
         const clientSrcPath = this.options.clientSrcPath || '.';
-        if (clientCommand && this.cliOptions['generate-client'] !== false) {
+        if (clientCommand && this.getCLIOptions('generate-client') !== false) {
             const args = clientCommand.split(' ');
             const command = args.shift();
             return new BbPromise(this.performClientGeneration.bind(this, command, args, clientSrcPath));
@@ -150,7 +150,7 @@ class ServerlessFullstackPlugin {
 
     processDeployment() {
 
-        if(this.cliOptions['client-deploy'] !== false) {
+        if(this.getCLIOptions('client-deploy') !== false) {
             let region,
                 distributionFolder,
                 clientPath,
@@ -189,7 +189,7 @@ class ServerlessFullstackPlugin {
 
                     const deployDescribe = ['This deployment will:'];
 
-                    if (this.cliOptions['delete-contents'] !== false) {
+                    if (this.getCLIOptions('delete-contents') !== false) {
                         deployDescribe.push(`- Remove all existing files from bucket '${bucketName}'`);
                     }
                     deployDescribe.push(
@@ -197,7 +197,7 @@ class ServerlessFullstackPlugin {
                     );
 
                     deployDescribe.forEach(m => this.serverless.cli.log(m));
-                    return (this.cliOptions.confirm === false || this.options.noConfirm === true) ? true : new Confirm(`Do you want to proceed?`).run();
+                    return (this.getCLIOptions('confirm') === false || this.options.noConfirm === true) ? true : new Confirm(`Do you want to proceed?`).run();
                 })
                 .then(goOn => {
                     if (goOn) {
@@ -207,7 +207,7 @@ class ServerlessFullstackPlugin {
                             .then(exists => {
                                 if (exists) {
                                     this.serverless.cli.log(`Bucket found...`);
-                                    if (this.cliOptions['delete-contents'] === false) {
+                                    if (this.getCLIOptions('delete-contents') === false) {
                                         this.serverless.cli.log(`Keeping current bucket contents...`);
                                         return BbPromise.resolve();
                                     }
@@ -233,7 +233,7 @@ class ServerlessFullstackPlugin {
                     return BbPromise.resolve();
                 })
                 .then(() => {
-                    if (this.cliOptions['invalidate-distribution'] === false) {
+                    if (this.getCLIOptions('invalidate-distribution') === false) {
                         this.serverless.cli.log(`Skipping cloudfront invalidation...`);
                     } else {
                         return invalidateCloudfrontDistribution(this.serverless, invalidationPaths);
@@ -560,6 +560,31 @@ class ServerlessFullstackPlugin {
             stage = this.cliOptions.stage;
         }
         return stage;
+    }
+
+    /**
+     * Serverless v3 hotfix/compat.
+     * @param {the cli option} param 
+     * @returns Boolean
+     */
+    getCLIOptions(param) {
+      // v3
+      const isv3 = this.serverless.version.split('.')[0] === '3';
+      if (isv3) {
+        const cliOptionsParams = Array.isArray(this.cliOptions?.param) ? [...this.cliOptions.param] : [];
+        const cliOptions = {...this.cliOptions}
+
+        // Build key/value cli options from param array
+        cliOptionsParams.forEach((k) => {
+          const key = k.replace('no-', '');
+          const val = !k.includes('no');
+          cliOptions[key] = val;
+        });
+        return cliOptions[param]
+      }
+
+      // v2
+      return this.cliOptions[param]
     }
 }
 

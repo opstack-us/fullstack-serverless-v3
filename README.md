@@ -97,8 +97,20 @@ echo "error page" >> client/dist/error.html
 
 **Third**, run the plugin (this can take several minutes the first time), and visit your new website!
 
+Serverless v2 cli params
+
 ```bash
 serverless deploy [--no-delete-contents] [--no-generate-client]
+```
+
+Serverless v3 cli params
+
+> Serverless v3 forbids free-form cli options.  
+> Therefore options can now only be passed as `--param="option=value"`.  
+> For the sake of simplicity, all v2 options are still available and passable through the `param` argument.  
+
+```bash
+serverless deploy [--param="no-delete-contents"] [--param="generate-client"]
 ```
 
 The plugin should output the location of your newly deployed static site to the console.
