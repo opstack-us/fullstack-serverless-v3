@@ -412,6 +412,7 @@ class ServerlessFullstackPlugin {
                         }
                     }
                 }
+            }
             
             distributionConfig.CacheBehaviors.push(
                 ...customCacheBehaviors
