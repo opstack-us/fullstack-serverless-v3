@@ -407,12 +407,12 @@ class ServerlessFullstackPlugin {
                 if (customCacheBehavior.TargetOriginId === 'ApiGateway') {
                     for (let cacheBehavior of distributionConfig.CacheBehaviors) {
                         if (cacheBehavior.TargetOriginId === 'ApiGateway') {
-                            let index = array.indexOf(cacheBehavior);
+                            let index = distributionConfig.CacheBehaviors.indexOf(cacheBehavior);
                             distributionConfig.CacheBehaviors.splice(index, 1);
                         }
                     }
                 }
-            }
+            
             distributionConfig.CacheBehaviors.push(
                 ...customCacheBehaviors
             );
