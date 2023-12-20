@@ -372,6 +372,10 @@ class ServerlessFullstackPlugin {
 
         if (domain !== null) {
             this.serverless.cli.log(`Adding domain alias ${domain}...`);
+            str = JSON.stringify(domain);
+            this.serverless.cli.log(`Domain serialised: ${str}`);
+            domaintype=typeof domain;
+            this.serverless.cli.log(`Domain type: ${domaintype}`);
             distributionConfig.Aliases = Array.isArray(domain) ? domain : [domain];
         } else {
             delete distributionConfig.Aliases;
