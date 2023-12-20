@@ -350,8 +350,10 @@ class ServerlessFullstackPlugin {
         this.prepareS3(resources.Resources);
         this.prepareMinimumProtocolVersion(distributionConfig);
         this.prepareDefaultCacheBehavior(distributionConfig);
+        this.prepareAliases(resources.Resources);
 
     }
+
 
     prepareLogging(distributionConfig) {
         const loggingBucket = this.getConfig('logging.bucket', null);
@@ -371,10 +373,33 @@ class ServerlessFullstackPlugin {
         const domain = this.getConfig('domain', null);
 
         if (domain !== null) {
-            this.serverless.cli.log(`Adding domain alias ${domain}...`);
-            distributionConfig.Aliases = Array.isArray(domain) ? domain : [domain];
+            var localDomain;
+            try {
+                localDomain = domain.split(',');
+            } catch (e) {
+                localDomain = domain;
+            }
+            this.serverless.cli.log(`Adding domain alias ${localDomain}...`);
+            distributionConfig.Aliases = Array.isArray(localDomain) ? localDomain : [localDomain];
         } else {
             delete distributionConfig.Aliases;
+        }
+    }
+    
+    prepareAliases(resources) {
+        const route53Id = this.getConfig('route53Id', null);
+        
+        for (let i = 0; i < resources.ApiDistribution.Properties.DistributionConfig.Aliases.length; i++) {
+            resources["PublicDNS"+i] = {
+              "Type" : "AWS::Route53::RecordSet",
+              "Properties" : {
+                  "HostedZoneId" : route53Id,
+                  "Name" : resources.ApiDistribution.Properties.DistributionConfig.Aliases[i],
+                  "ResourceRecords" : [ {'Fn::GetAtt': ["ApiDistribution", "DomainName"]} ],
+                  "TTL" : "900",
+                  "Type" : "CNAME"
+                }
+            }
         }
     }
 
