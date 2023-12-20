@@ -371,6 +371,10 @@ class ServerlessFullstackPlugin {
         const domain = this.getConfig('domain', null);
 
         if (domain !== null) {
+            
+            try {
+                domain = JSON.parse(domain);
+            } catch (e) {}
             this.serverless.cli.log(`Adding domain alias ${domain}...`);
             const str = JSON.stringify(domain);
             this.serverless.cli.log(`Domain serialised: ${str}`);
