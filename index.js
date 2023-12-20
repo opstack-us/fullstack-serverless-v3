@@ -377,15 +377,9 @@ class ServerlessFullstackPlugin {
             try {
                 localDomain = domain.split(',');
             } catch (e) {
-                this.serverless.cli.log(`Parsing failed ${e}`);
                 localDomain = domain;
             }
             this.serverless.cli.log(`Adding domain alias ${localDomain}...`);
-            const str = JSON.stringify(localDomain);
-            this.serverless.cli.log(`Domain serialised: ${str}`);
-            const domaintype=typeof localDomain;
-            this.serverless.cli.log(`Domain type: ${domaintype}`);
-            this.serverless.cli.log(`isArray: ${Array.isArray(localDomain)}`);
             distributionConfig.Aliases = Array.isArray(localDomain) ? localDomain : [localDomain];
         } else {
             delete distributionConfig.Aliases;
