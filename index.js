@@ -399,7 +399,7 @@ class ServerlessFullstackPlugin {
 			  "Properties" : {
 				  "HostedZoneId" : this.getConfig('route53Id', null),
 				  "Name" : domain,
-				  "ResourceRecords" : [ 'Fn::GetAtt': ["ApiDistribution", "DomainName"] ],
+				  "ResourceRecords" : [ {'Fn::GetAtt': ["ApiDistribution", "DomainName"]} ],
 				  "TTL" : "900",
 				  "Type" : "CNAME"
 				}
