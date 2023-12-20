@@ -374,7 +374,7 @@ class ServerlessFullstackPlugin {
             
             try {
                 domain = JSON.parse(domain);
-            } catch (e) {}
+            } catch (e) {this.serverless.cli.log(`Parsing failed ${e}`)}
             this.serverless.cli.log(`Adding domain alias ${domain}...`);
             const str = JSON.stringify(domain);
             this.serverless.cli.log(`Domain serialised: ${str}`);
