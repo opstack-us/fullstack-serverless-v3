@@ -373,7 +373,7 @@ class ServerlessFullstackPlugin {
         if (domain !== null) {
             var localDomain;
             try {
-                localDomain = JSON.parse(domain);
+                localDomain = domain.split(',');
             } catch (e) {
                 this.serverless.cli.log(`Parsing failed ${e}`);
                 localDomain = domain;
