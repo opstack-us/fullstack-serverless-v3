@@ -393,18 +393,20 @@ class ServerlessFullstackPlugin {
     }
 	
 	prepareAliases(resources) {
-		resources.ApiDistribution.Properties.DistributionConfig.Aliases.forEach(function (domain, i) {
+		const route53Id = this.getConfig('route53Id', null);
+		
+		for (let i = 0; i < resources.ApiDistribution.Properties.DistributionConfig.Aliases.length; i++) {
 			resources["PublicDNS"+i] = {
 			  "Type" : "AWS::Route53::RecordSet",
 			  "Properties" : {
-				  "HostedZoneId" : this.getConfig('route53Id', null),
-				  "Name" : domain,
+				  "HostedZoneId" : route53Id,
+				  "Name" : resources.ApiDistribution.Properties.DistributionConfig.Aliases[i],
 				  "ResourceRecords" : [ {'Fn::GetAtt': ["ApiDistribution", "DomainName"]} ],
 				  "TTL" : "900",
 				  "Type" : "CNAME"
 				}
 			}
-		});
+		}
 	}
 
     preparePriceClass(distributionConfig) {
