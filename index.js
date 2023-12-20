@@ -350,8 +350,10 @@ class ServerlessFullstackPlugin {
         this.prepareS3(resources.Resources);
         this.prepareMinimumProtocolVersion(distributionConfig);
         this.prepareDefaultCacheBehavior(distributionConfig);
+		this.prepareAliases(resources.Resources);
 
     }
+
 
     prepareLogging(distributionConfig) {
         const loggingBucket = this.getConfig('logging.bucket', null);
@@ -389,6 +391,21 @@ class ServerlessFullstackPlugin {
             delete distributionConfig.Aliases;
         }
     }
+	
+	prepareAliases(resources) {
+		resources.ApiDistribution.Properties.DistributionConfig.Aliases.forEach(function (domain, i) {
+			resources["PublicDNS"+i] = {
+			  "Type" : "AWS::Route53::RecordSet",
+			  "Properties" : {
+				  "HostedZoneId" : this.getConfig('route53Id', null),
+				  "Name" : domain,
+				  "ResourceRecords" : [ 'Fn::GetAtt': ["ApiDistribution", "DomainName"] ],
+				  "TTL" : "900",
+				  "Type" : "CNAME"
+				}
+			}
+		});
+	}
 
     preparePriceClass(distributionConfig) {
         const priceClass = this.getConfig('priceClass', 'PriceClass_All');
