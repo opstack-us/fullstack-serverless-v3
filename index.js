@@ -390,7 +390,8 @@ class ServerlessFullstackPlugin {
         const route53Id = this.getConfig('route53Id', null);
         
         for (let i = 0; i < resources.ApiDistribution.Properties.DistributionConfig.Aliases.length; i++) {
-            resources["PublicDNS"+i] = {
+            var name = i==0 ? "" : i;
+            resources["PublicDNS"+name] = {
               "Type" : "AWS::Route53::RecordSet",
               "Properties" : {
                   "HostedZoneId" : route53Id,
