@@ -388,17 +388,22 @@ class ServerlessFullstackPlugin {
     
     prepareAliases(resources) {
         const route53Id = this.getConfig('route53Id', null);
+        const route53Domain = this.getConfig('route53Domain', null);
         
         for (let i = 0; i < resources.ApiDistribution.Properties.DistributionConfig.Aliases.length; i++) {
-            var name = i==0 ? "" : i;
-            resources["PublicDNS"+name] = {
-              "Type" : "AWS::Route53::RecordSet",
-              "Properties" : {
-                  "HostedZoneId" : route53Id,
-                  "Name" : resources.ApiDistribution.Properties.DistributionConfig.Aliases[i],
-                  "ResourceRecords" : [ {'Fn::GetAtt': ["ApiDistribution", "DomainName"]} ],
-                  "TTL" : "900",
-                  "Type" : "CNAME"
+            var alias = resources.ApiDistribution.Properties.DistributionConfig.Aliases[i];
+            // Alias is in the hosted zone domain, so we can add this record.
+            if (alias.endsWith('.'+route53Domain)) {
+                var name = i==0 ? "" : i;
+                resources["PublicDNS"+name] = {
+                  "Type" : "AWS::Route53::RecordSet",
+                  "Properties" : {
+                      "HostedZoneId" : route53Id,
+                      "Name" : alias,
+                      "ResourceRecords" : [ {'Fn::GetAtt': ["ApiDistribution", "DomainName"]} ],
+                      "TTL" : "900",
+                      "Type" : "CNAME"
+                    }
                 }
             }
         }
