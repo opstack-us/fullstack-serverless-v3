@@ -256,7 +256,7 @@ class ServerlessFullstackPlugin {
                                     }
                                 })
                                 .then(() => {
-                                    this.logger.info(`Uploading client files to bucket...`);
+                                    this.logger.info(`Preparing to upload client files to bucket '${bucketName}'...`);
                                     return uploadDirectory(this.aws, bucketName, clientPath, headerSpec, this.logger);
                                 })
                                 .then(() => {
@@ -429,8 +429,16 @@ class ServerlessFullstackPlugin {
         const route53Id = this.getConfig('route53Id', null);
         const route53Domain = this.getConfig('route53Domain', null);
         
-        for (let i = 0; i < resources.ApiDistribution.Properties.DistributionConfig.Aliases.length; i++) {
-            var alias = resources.ApiDistribution.Properties.DistributionConfig.Aliases[i];
+        if (!route53Id || !route53Domain) {
+            this.logger.verbose(`Route53 configuration not provided, skipping DNS record creation`);
+            return;
+        }
+        
+        const aliases = resources.ApiDistribution.Properties.DistributionConfig.Aliases || [];
+        let recordCount = 0;
+        
+        for (let i = 0; i < aliases.length; i++) {
+            var alias = aliases[i];
             // Alias is in the hosted zone domain, so we can add this record.
             if (alias.endsWith('.'+route53Domain)) {
                 var name = i==0 ? "" : i;
@@ -444,7 +452,14 @@ class ServerlessFullstackPlugin {
                       "Type" : "CNAME"
                     }
                 }
+                recordCount++;
             }
+        }
+        
+        if (recordCount > 0) {
+            this.logger.verbose(`Creating ${recordCount} Route53 DNS record(s) for CloudFront aliases`);
+        } else {
+            this.logger.verbose(`No Route53 DNS records needed (aliases not in hosted zone domain)`);
         }
     }
 
@@ -475,6 +490,7 @@ class ServerlessFullstackPlugin {
     preparePathPattern(distributionConfig) {
         const customCacheBehaviors = this.getConfig('cacheBehaviors', null);
         if (customCacheBehaviors) {
+            this.logger.verbose(`Configuring ${customCacheBehaviors.length} custom cache behavior(s)`);
             for (let customCacheBehavior of customCacheBehaviors) {
                 for (let cacheBehavior of distributionConfig.CacheBehaviors) {
                     if (cacheBehavior.TargetOriginId === customCacheBehavior.TargetOriginId) {
@@ -500,6 +516,7 @@ class ServerlessFullstackPlugin {
 
     prepareComment(distributionConfig) {
         const name = this.serverless.getProvider('aws').naming.getApiGatewayName();
+        this.logger.verbose(`Setting CloudFront distribution comment: Serverless Managed ${name}`);
         distributionConfig.Comment = `Serverless Managed ${name}`;
     }
 
@@ -515,13 +532,16 @@ class ServerlessFullstackPlugin {
         }
     }
 
-   prepareMinimumProtocolVersion(distributionConfig) {
-    const minimumProtocolVersion = this.getConfig('minimumProtocolVersion', undefined);
+    prepareMinimumProtocolVersion(distributionConfig) {
+        const minimumProtocolVersion = this.getConfig('minimumProtocolVersion', undefined);
 
-    if (minimumProtocolVersion) {
-      distributionConfig.ViewerCertificate.MinimumProtocolVersion = minimumProtocolVersion;
+        if (minimumProtocolVersion) {
+            this.logger.verbose(`Setting minimum SSL/TLS protocol version: ${minimumProtocolVersion}`);
+            distributionConfig.ViewerCertificate.MinimumProtocolVersion = minimumProtocolVersion;
+        } else {
+            this.logger.verbose(`Using default minimum SSL/TLS protocol version`);
+        }
     }
-  }
 
     prepareWaf(distributionConfig) {
         const waf = this.getConfig('waf', null);
