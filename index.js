@@ -12,6 +12,7 @@ const bucketUtils = require('./lib/bucketUtils');
 const uploadDirectory = require('./lib/upload');
 const validateClient = require('./lib/validate');
 const invalidateCloudfrontDistribution = require('./lib/cloudFront');
+const Logger = require('./lib/utilities/logger');
 
 class ServerlessFullstackPlugin {
     constructor(serverless, cliOptions) {
@@ -21,6 +22,9 @@ class ServerlessFullstackPlugin {
         this.options = serverless.service.custom.fullstack;
         this.cliOptions = cliOptions || {};
         this.aws = this.serverless.getProvider('aws');
+        
+        // Initialize enhanced logger
+        this.logger = new Logger(serverless);
 
         this.hooks = {
             'package:createDeploymentArtifacts': this.createDeploymentArtifacts.bind(this),
@@ -53,9 +57,12 @@ class ServerlessFullstackPlugin {
     }
 
     validateConfig() {
+        this.logger.verbose('Validating fullstack configuration...');
         try {
-            validateClient(this.serverless, this.options);
+            validateClient(this.serverless, this.options, this.logger);
+            this.logger.verbose('Configuration validation passed');
         } catch (e) {
+            this.logger.error('Configuration validation failed', e);
             return BbPromise.reject(`Fullstack serverless configuration errors:\n- ${e.join('\n- ')}`);
         }
         return BbPromise.resolve();
@@ -64,45 +71,52 @@ class ServerlessFullstackPlugin {
     removeDeployedResources() {
         let bucketName;
 
-        return this.validateConfig()
-            .then(() => {
-                bucketName = this.getBucketName(this.options.bucketName);
-                return (this.getCLIOptions('confirm') === false || this.options.noConfirm === true) ? true : new Confirm(`Are you sure you want to delete bucket '${bucketName}'?`).run();
-            })
-            .then(goOn => {
-                if (goOn) {
-                    this.serverless.cli.log(`Looking for bucket '${bucketName}'...`);
-                    return bucketUtils.bucketExists(this.aws, bucketName).then(exists => {
-                        if (exists) {
-                            this.serverless.cli.log(`Deleting all objects from bucket...`);
-                            return bucketUtils
-                                .emptyBucket(this.aws, bucketName)
-                                .then(() => {
-                                    this.serverless.cli.log(
-                                        `Success! Your client files have been removed`
-                                    );
-                                });
-                        } else {
-                            this.serverless.cli.log(`Bucket does not exist`);
-                        }
-                    });
-                }
-                this.serverless.cli.log('Bucket not removed');
-                return BbPromise.resolve();
-            })
-            .catch(error => {
-                return BbPromise.reject(new this.error(error));
-            });
+        return this.logger.logOperation('removeDeployedResources', async () => {
+            return this.validateConfig()
+                .then(() => {
+                    bucketName = this.getBucketName(this.options.bucketName);
+                    this.logger.verbose(`Target bucket: ${bucketName}`);
+                    return (this.getCLIOptions('confirm') === false || this.options.noConfirm === true) ? true : new Confirm(`Are you sure you want to delete bucket '${bucketName}'?`).run();
+                })
+                .then(goOn => {
+                    if (goOn) {
+                        this.logger.info(`Looking for bucket '${bucketName}'...`);
+                        return bucketUtils.bucketExists(this.aws, bucketName, this.logger).then(exists => {
+                            if (exists) {
+                                this.logger.info(`Deleting all objects from bucket...`);
+                                return bucketUtils
+                                    .emptyBucket(this.aws, bucketName, this.logger)
+                                    .then(() => {
+                                        this.logger.success(`Your client files have been removed`);
+                                    });
+                            } else {
+                                this.logger.warn(`Bucket '${bucketName}' does not exist`);
+                            }
+                        });
+                    }
+                    this.logger.info('Bucket removal cancelled');
+                    return BbPromise.resolve();
+                })
+                .catch(error => {
+                    this.logger.error('Failed to remove deployed resources', error);
+                    return BbPromise.reject(new this.error(error));
+                });
+        });
     }
 
     setClientEnv() {
-        this.serverless.cli.log(`Setting the environment variables...`);
+        this.logger.verbose(`Setting the environment variables...`);
         const serverlessEnv = this.serverless.service.provider.environment;
 
         if (!serverlessEnv) {
-          return this.serverless.cli.log(
-            `No environment variables detected. Skipping step...`
-          );
+          this.logger.verbose(`No environment variables detected. Skipping step...`);
+          return {};
+        }
+
+        const envCount = Object.keys(serverlessEnv).length;
+        this.logger.verbose(`Found ${envCount} environment variable(s) to set`);
+        if (this.logger.isDebug()) {
+            this.logger.debug('Environment variables', Object.keys(serverlessEnv));
         }
 
         return Object.assign({}, process.env, serverlessEnv);
@@ -114,35 +128,46 @@ class ServerlessFullstackPlugin {
         if (clientCommand && this.getCLIOptions('generate-client') !== false) {
             const args = clientCommand.split(' ');
             const command = args.shift();
+            this.logger.verbose(`Client command: ${command}`, { args, clientSrcPath });
             return new BbPromise(this.performClientGeneration.bind(this, command, args, clientSrcPath));
 
         } else {
-            this.serverless.cli.log(`Skipping client generation...`);
+            this.logger.verbose(`Skipping client generation...`);
         }
 
         return BbPromise.resolve();
     }
 
     performClientGeneration(command, args, clientSrcPath, resolve, reject) {
-        this.serverless.cli.log(`Generating client...`);
+        this.logger.startTimer('clientGeneration');
+        this.logger.info(`Generating client...`);
+        this.logger.verbose(`Running: ${command} ${args.join(' ')}`);
+        this.logger.verbose(`Working directory: ${clientSrcPath}`);
+        
         const clientEnv = this.setClientEnv();
         const proc = spawn(command, args, {cwd: clientSrcPath, env: clientEnv, shell: true});
 
         proc.stdout.on('data', (data) => {
             const printableData = data ? `${data}`.trim() : '';
-            this.serverless.cli.consoleLog(`   ${chalk.dim(printableData)}`);
+            if (printableData) {
+                this.logger.verbose(`Client build output: ${printableData}`);
+            }
         });
 
         proc.stderr.on('data', (data) => {
             const printableData = data ? `${data}`.trim() : '';
-            this.serverless.cli.consoleLog(`   ${chalk.red(printableData)}`);
+            if (printableData) {
+                this.logger.verbose(`Client build stderr: ${printableData}`);
+            }
         });
 
         proc.on('close', (code) => {
+            const elapsed = this.logger.endTimer('clientGeneration');
             if (code === 0) {
-                this.serverless.cli.log(`Client generation process succeeded...`);
+                this.logger.success(`Client generation succeeded (${this.logger.formatTime(elapsed)})`);
                 resolve();
             } else {
+                this.logger.error(`Client generation failed with exit code ${code} (${this.logger.formatTime(elapsed)})`);
                 reject(new this.error(`Client generation failed with code ${code}`));
             }
         });
@@ -160,90 +185,101 @@ class ServerlessFullstackPlugin {
                 errorDoc,
                 invalidationPaths;
 
-            return this.validateConfig()
-                .then(() => {
-                    // region is set based on the following order of precedence:
-                    // If specified, the CLI option is used
-                    // If region is not specified via the CLI, we use the region option specified
-                    //   under custom/client in serverless.yml
-                    // Otherwise, use the Serverless region specified under provider in serverless.yml
-                    region =
-                        this.cliOptions.region ||
-                        this.options.region ||
-                        _.get(this.serverless, 'service.provider.region');
+            return this.logger.logOperation('processDeployment', async () => {
+                return this.validateConfig()
+                    .then(() => {
+                        // region is set based on the following order of precedence:
+                        // If specified, the CLI option is used
+                        // If region is not specified via the CLI, we use the region option specified
+                        //   under custom/client in serverless.yml
+                        // Otherwise, use the Serverless region specified under provider in serverless.yml
+                        region =
+                            this.cliOptions.region ||
+                            this.options.region ||
+                            _.get(this.serverless, 'service.provider.region');
 
-                    distributionFolder = this.options.distributionFolder || path.join('client/dist');
-                    clientPath = path.join(this.serverless.config.servicePath, distributionFolder);
-                    bucketName = this.getBucketName(this.options.bucketName);
-                    headerSpec = this.options.objectHeaders;
-                    indexDoc = this.options.indexDocument || "index.html";
-                    errorDoc = this.options.errorDocument || "error.html";
-                    invalidationPaths = this.options.invalidationPaths || ['/*'];
+                        distributionFolder = this.options.distributionFolder || path.join('client/dist');
+                        clientPath = path.join(this.serverless.config.servicePath, distributionFolder);
+                        bucketName = this.getBucketName(this.options.bucketName);
+                        headerSpec = this.options.objectHeaders;
+                        indexDoc = this.options.indexDocument || "index.html";
+                        errorDoc = this.options.errorDocument || "error.html";
+                        invalidationPaths = this.options.invalidationPaths || ['/*'];
 
-                    if (!Array.isArray(invalidationPaths)) {
-                        invalidationPaths = [invalidationPaths];
-                    }
-                    
-                    //paths must start with '/'
-                    invalidationPaths = invalidationPaths.map(path => path[0] === '/' ? path : '/' + path);
+                        if (!Array.isArray(invalidationPaths)) {
+                            invalidationPaths = [invalidationPaths];
+                        }
+                        
+                        //paths must start with '/'
+                        invalidationPaths = invalidationPaths.map(path => path[0] === '/' ? path : '/' + path);
 
-                    const deployDescribe = ['This deployment will:'];
+                        this.logger.verbose('Deployment configuration', {
+                            region,
+                            distributionFolder,
+                            clientPath,
+                            bucketName,
+                            indexDoc,
+                            errorDoc,
+                            invalidationPaths: invalidationPaths.length
+                        });
 
-                    if (this.getCLIOptions('delete-contents') !== false) {
-                        deployDescribe.push(`- Remove all existing files from bucket '${bucketName}'`);
-                    }
-                    deployDescribe.push(
-                        `- Upload all files from '${distributionFolder}' to bucket '${bucketName}'`
-                    );
+                        const deployDescribe = ['This deployment will:'];
 
-                    deployDescribe.forEach(m => this.serverless.cli.log(m));
-                    return (this.getCLIOptions('confirm') === false || this.options.noConfirm === true) ? true : new Confirm(`Do you want to proceed?`).run();
-                })
-                .then(goOn => {
-                    if (goOn) {
-                        this.serverless.cli.log(`Looking for bucket '${bucketName}'...`);
-                        return bucketUtils
-                            .bucketExists(this.aws, bucketName)
-                            .then(exists => {
-                                if (exists) {
-                                    this.serverless.cli.log(`Bucket found...`);
-                                    if (this.getCLIOptions('delete-contents') === false) {
-                                        this.serverless.cli.log(`Keeping current bucket contents...`);
-                                        return BbPromise.resolve();
+                        if (this.getCLIOptions('delete-contents') !== false) {
+                            deployDescribe.push(`- Remove all existing files from bucket '${bucketName}'`);
+                        }
+                        deployDescribe.push(
+                            `- Upload all files from '${distributionFolder}' to bucket '${bucketName}'`
+                        );
+
+                        deployDescribe.forEach(m => this.logger.info(m));
+                        return (this.getCLIOptions('confirm') === false || this.options.noConfirm === true) ? true : new Confirm(`Do you want to proceed?`).run();
+                    })
+                    .then(goOn => {
+                        if (goOn) {
+                            this.logger.info(`Looking for bucket '${bucketName}'...`);
+                            return bucketUtils
+                                .bucketExists(this.aws, bucketName, this.logger)
+                                .then(exists => {
+                                    if (exists) {
+                                        this.logger.info(`Bucket found...`);
+                                        if (this.getCLIOptions('delete-contents') === false) {
+                                            this.logger.info(`Keeping current bucket contents...`);
+                                            return BbPromise.resolve();
+                                        }
+
+                                        this.logger.info(`Deleting all objects from bucket...`);
+                                        return bucketUtils.emptyBucket(this.aws, bucketName, this.logger);
+                                    } else {
+                                        this.logger.error(`Bucket does not exist. Run ${chalk.black('serverless deploy')}`);
+                                        return BbPromise.reject('Bucket does not exist!');
                                     }
-
-                                    this.serverless.cli.log(`Deleting all objects from bucket...`);
-                                    return bucketUtils.emptyBucket(this.aws, bucketName);
-                                } else {
-                                    this.serverless.cli.log(`Bucket does not exist. Run ${chalk.black('serverless deploy')}`);
-                                    return BbPromise.reject('Bucket does not exist!');
-                                }
-                            })
-                            .then(() => {
-                                this.serverless.cli.log(`Uploading client files to bucket...`);
-                                return uploadDirectory(this.aws, bucketName, clientPath, headerSpec);
-                            })
-                            .then(() => {
-                                this.serverless.cli.log(
-                                    `Success! Client deployed.`
-                                );
-                            });
-                    }
-                    this.serverless.cli.log('Client deployment cancelled');
-                    return BbPromise.resolve();
-                })
-                .then(() => {
-                    if (this.getCLIOptions('invalidate-distribution') === false) {
-                        this.serverless.cli.log(`Skipping cloudfront invalidation...`);
-                    } else {
-                        return invalidateCloudfrontDistribution(this.serverless, invalidationPaths);
-                    }
-                })
-                .catch(error => {
-                    return BbPromise.reject(new this.error(error));
-                });
+                                })
+                                .then(() => {
+                                    this.logger.info(`Uploading client files to bucket...`);
+                                    return uploadDirectory(this.aws, bucketName, clientPath, headerSpec, this.logger);
+                                })
+                                .then(() => {
+                                    this.logger.success(`Client deployed successfully`);
+                                });
+                        }
+                        this.logger.info('Client deployment cancelled');
+                        return BbPromise.resolve();
+                    })
+                    .then(() => {
+                        if (this.getCLIOptions('invalidate-distribution') === false) {
+                            this.logger.verbose(`Skipping cloudfront invalidation...`);
+                        } else {
+                            return invalidateCloudfrontDistribution(this.serverless, invalidationPaths, this.logger);
+                        }
+                    })
+                    .catch(error => {
+                        this.logger.error('Deployment failed', error);
+                        return BbPromise.reject(new this.error(error));
+                    });
+            });
         } else {
-            this.serverless.cli.log(`Skipping client deployment...`);
+            this.logger.verbose(`Skipping client deployment...`);
         }
     }
 
@@ -272,7 +308,7 @@ class ServerlessFullstackPlugin {
     }
 
     removeApiGatewayOrigin(baseResources) {
-        this.serverless.cli.log(`ApiGatewayRestApi not found, removing origin from CloudFront...`);
+        this.logger.verbose(`ApiGatewayRestApi not found, removing origin from CloudFront...`);
         const distributionConfig = baseResources.Resources.ApiDistribution.Properties.DistributionConfig;
         distributionConfig.Origins = _.filter(distributionConfig.Origins, (origin => {
             return origin.Id !== 'ApiGateway';
@@ -359,12 +395,13 @@ class ServerlessFullstackPlugin {
         const loggingBucket = this.getConfig('logging.bucket', null);
 
         if (loggingBucket !== null) {
-            this.serverless.cli.log(`Setting up logging bucket...`);
+            const prefix = this.getConfig('logging.prefix', '');
+            this.logger.verbose(`Setting up CloudFront logging bucket: ${loggingBucket}`, { prefix });
             distributionConfig.Logging.Bucket = loggingBucket;
-            distributionConfig.Logging.Prefix = this.getConfig('logging.prefix', '');
+            distributionConfig.Logging.Prefix = prefix;
 
         } else {
-            this.serverless.cli.log(`Removing logging bucket...`);
+            this.logger.verbose(`Removing logging bucket configuration...`);
             delete distributionConfig.Logging;
         }
     }
@@ -379,9 +416,11 @@ class ServerlessFullstackPlugin {
             } catch (e) {
                 localDomain = domain;
             }
-            this.serverless.cli.log(`Adding domain alias ${localDomain}...`);
-            distributionConfig.Aliases = Array.isArray(localDomain) ? localDomain : [localDomain];
+            const domains = Array.isArray(localDomain) ? localDomain : [localDomain];
+            this.logger.verbose(`Adding domain alias(es): ${domains.join(', ')}`);
+            distributionConfig.Aliases = domains;
         } else {
+            this.logger.verbose(`No custom domain configured, using default CloudFront domain`);
             delete distributionConfig.Aliases;
         }
     }
@@ -411,20 +450,22 @@ class ServerlessFullstackPlugin {
 
     preparePriceClass(distributionConfig) {
         const priceClass = this.getConfig('priceClass', 'PriceClass_All');
-        this.serverless.cli.log(`Setting price class ${priceClass}...`);
+        this.logger.verbose(`Setting CloudFront price class: ${priceClass}`);
         distributionConfig.PriceClass = priceClass;
     }
 
     prepareOrigins(distributionConfig) {
-        this.serverless.cli.log(`Setting ApiGateway stage to '${this.getStage()}'...`);
+        const stage = this.getStage();
+        this.logger.verbose(`Setting ApiGateway stage to '${stage}'...`);
         for (var origin of distributionConfig.Origins) {
             if (origin.Id === 'ApiGateway') {
-                origin.OriginPath = `/${this.getStage()}`;
+                origin.OriginPath = `/${stage}`;
             }
         }
         
         const customOrigins = this.getConfig('origins', null);
         if (customOrigins) {
+            this.logger.verbose(`Adding ${customOrigins.length} custom origin(s)`);
             distributionConfig.Origins.push(
                 ...customOrigins
             );
@@ -449,7 +490,7 @@ class ServerlessFullstackPlugin {
         }
         
         const apiPath = this.getConfig('apiPath', 'api');
-        this.serverless.cli.log(`Setting API path prefix to '${apiPath}'...`);
+        this.logger.verbose(`Setting API path prefix to '${apiPath}'...`);
         for (let cacheBehavior of distributionConfig.CacheBehaviors) {
             if (cacheBehavior.TargetOriginId === 'ApiGateway') {
                 cacheBehavior.PathPattern = `${apiPath}/*`;
@@ -466,9 +507,10 @@ class ServerlessFullstackPlugin {
         const certificate = this.getConfig('certificate', null);
 
         if (certificate !== null) {
-            this.serverless.cli.log(`Configuring SSL certificate...`);
+            this.logger.verbose(`Configuring SSL certificate: ${certificate}`);
             distributionConfig.ViewerCertificate.AcmCertificateArn = certificate;
         } else {
+            this.logger.verbose(`No SSL certificate configured, using default CloudFront certificate`);
             delete distributionConfig.ViewerCertificate;
         }
     }
@@ -485,9 +527,10 @@ class ServerlessFullstackPlugin {
         const waf = this.getConfig('waf', null);
 
         if (waf !== null) {
-            this.serverless.cli.log(`Enabling web application firewall...`);
+            this.logger.verbose(`Enabling web application firewall: ${waf}`);
             distributionConfig.WebACLId = waf;
         } else {
+            this.logger.verbose(`Web application firewall not configured`);
             delete distributionConfig.WebACLId;
         }
     }
@@ -496,7 +539,7 @@ class ServerlessFullstackPlugin {
         const distributionConfig = resources.ApiDistribution.Properties.DistributionConfig;
         const isSinglePageApp = this.getConfig('singlePageApp', false);
         if (isSinglePageApp) {
-            this.serverless.cli.log(`Configuring distribution for single page web app...`);
+            this.logger.verbose(`Configuring distribution for single page web app...`);
             const indexDocument = this.getConfig('indexDocument', 'index.html')
             for (let errorResponse of distributionConfig.CustomErrorResponses) {
                 if (errorResponse.ErrorCode === '403') {
@@ -556,18 +599,18 @@ class ServerlessFullstackPlugin {
 
         if (bucketName !== null) {
             const stageBucketName = this.getBucketName(bucketName);
-            this.serverless.cli.log(`Setting up '${stageBucketName}' bucket...`);
+            this.logger.verbose(`Setting up S3 bucket: '${stageBucketName}'`);
             resources.WebAppS3Bucket.Properties.BucketName = stageBucketName;
             resources.WebAppS3BucketPolicy.Properties.Bucket = stageBucketName;
         } else {
-            this.serverless.cli.log(`Setting up '${resources.WebAppS3Bucket.Properties.BucketName}' bucket...`);
+            this.logger.verbose(`Setting up S3 bucket: '${resources.WebAppS3Bucket.Properties.BucketName}'`);
         }
 
         const indexDocument = this.getConfig('indexDocument', 'index.html');
         const errorDocument = this.getConfig('errorDocument', 'error.html');
 
-        this.serverless.cli.log(`Setting indexDocument to '${indexDocument}'...`);
-        this.serverless.cli.log(`Setting errorDocument to '${errorDocument}'...`);
+        this.logger.verbose(`Setting indexDocument to '${indexDocument}'`);
+        this.logger.verbose(`Setting errorDocument to '${errorDocument}'`);
 
         resources.WebAppS3Bucket.Properties.WebsiteConfiguration.IndexDocument = indexDocument;
         resources.WebAppS3Bucket.Properties.WebsiteConfiguration.ErrorDocument = errorDocument;
@@ -576,6 +619,11 @@ class ServerlessFullstackPlugin {
     prepareDefaultCacheBehavior(distributionConfig) {
         const defaultCacheBehavior = this.getConfig('defaultCacheBehavior', {})
         const compressWebContent = this.getConfig('compressWebContent', true);
+
+        this.logger.verbose(`Configuring default cache behavior`, {
+            compressWebContent,
+            hasCustomBehavior: Object.keys(defaultCacheBehavior).length > 0
+        });
 
         distributionConfig.DefaultCacheBehavior = Object.assign({},
             distributionConfig.DefaultCacheBehavior,
