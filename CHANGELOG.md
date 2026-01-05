@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 - Adding basic v3 cli compatibility thanks to @somq
 
+## [0.9.0] - 2026-1-5
+- Adding better logging support and concurrent upload options
+
 ## [0.8.0] - 2021-1-28
 Thanks @pecirep, @miguel-a-calles-mba, @superandrew213
 
