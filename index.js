@@ -257,7 +257,9 @@ class ServerlessFullstackPlugin {
                                 })
                                 .then(() => {
                                     this.logger.info(`Preparing to upload client files to bucket '${bucketName}'...`);
-                                    return uploadDirectory(this.aws, bucketName, clientPath, headerSpec, this.logger);
+                                    const uploadConcurrency = this.getConfig('uploadConcurrency', 250);
+                                    this.logger.verbose(`Using upload concurrency: ${uploadConcurrency}`);
+                                    return uploadDirectory(this.aws, bucketName, clientPath, headerSpec, this.logger, uploadConcurrency);
                                 })
                                 .then(() => {
                                     this.logger.success(`Client deployed successfully`);
